@@ -23,18 +23,22 @@ namespace il2cpp_base::il2cpp {
         return false;
     }
 
-    c.jmp_rdx = detail::scan_module(config::kGameAssemblyModule, "\xFF\x27", "xx");
-    if (!c.jmp_rdx) {
-        LOG_FATAL("IL2CPP", "Failed to locate jmp [rdx] gadget in GameAssembly");
-        return false;
-    }
+    c.jmp_rdx = detail::find_jmp_gadget();
 
     void* domain = detail::spoofer::call(c.jmp_rdx, c.api.domain_get);
+    if (!domain) {
+        LOG_FATAL("IL2CPP", "il2cpp_domain_get returned null");
+        return false;
+    }
     detail::spoofer::call(c.jmp_rdx, c.api.thread_attach, domain);
 
     std::size_t assembly_count = 0;
     const void** assemblies = detail::spoofer::call(
         c.jmp_rdx, c.api.get_assemblies, static_cast<const void*>(domain), &assembly_count);
+    if (!assemblies) {
+        LOG_FATAL("IL2CPP", "il2cpp_domain_get_assemblies returned null");
+        return false;
+    }
 
     c.images.reserve(assembly_count);
     c.image_lookup.reserve(assembly_count);
@@ -61,12 +65,22 @@ namespace il2cpp_base::il2cpp {
     }
 
     c.initialized = true;
-    LOG_INFO("IL2CPP", "Resolver ready — %zu assemblies loaded", c.images.size());
+    LOG_INFO("IL2CPP", "Resolver ready - %zu assemblies loaded", c.images.size());
     return true;
 }
 
 [[nodiscard]] inline bool ready() {
     return detail::ctx().initialized;
+}
+
+inline void ensure_thread() {
+    auto& c = detail::ctx();
+    if (!c.initialized || !c.api.thread_attach || !c.api.domain_get) {
+        return;
+    }
+    if (void* domain = detail::spoofer::call(c.jmp_rdx, c.api.domain_get)) {
+        detail::spoofer::call(c.jmp_rdx, c.api.thread_attach, domain);
+    }
 }
 
 [[nodiscard]] inline Image* image(const std::string& name) {

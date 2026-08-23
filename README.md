@@ -2,7 +2,9 @@
 
 C++ starter project for IL2CPP Unity mods. Built for single-player games.
 
-Comes with a runtime class/method resolver (based on my old [rrid](https://github.com/Longno242/IL2CPP-Dumper/blob/main/IL2CPP%20Dumper/rrid.hpp) work), MinHook, ImGui overlay, and file logging.
+Comes with a runtime class/method resolver (based on my old [rrid](https://github.com/Longno242/IL2CPP-Dumper/blob/main/IL2CPP%20Dumper/rrid.hpp) work), MinHook, ImGui overlay, crash handler, and file logging.
+
+**Mono games won't work** — if the game does not use `GameAssembly.dll`, use [Mono-Base](https://github.com/Longno242/Mono-Base) instead.
 
 ## Requirements
 
@@ -19,26 +21,31 @@ cd Il2cpp-Base
 .\scripts\setup_deps.ps1
 ```
 
-That script pulls MinHook and Dear ImGui into `vendor/`.
+That script pulls pinned MinHook **v1.3.4** and Dear ImGui **v1.92.9b** into `vendor/`. Re-run it to refresh an existing clone.
 
 ## Build
 
 Open the folder in VS Code and run the **CMake: Build Release** task, or from a terminal:
 
 ```powershell
-cmake -B build -G "Visual Studio 18 2026" -A x64
+.\scripts\configure.ps1
+cmake --build build --config Release
+```
+
+`configure.ps1` tries Visual Studio 2026, then 2022. You can also pass a generator yourself:
+
+```powershell
+cmake -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 ```
 
 DLL output: `build/bin/Release/Il2cppBase.dll`
 
-If you're on VS 2022, swap the generator to `"Visual Studio 17 2022"`.
-
 ## Inject
 
 Load the DLL after `GameAssembly.dll` is in memory. Use whatever injector you already use.
 
-Logs go to `Il2cppBase.log` next to the game exe. A console window also opens by default.
+Logs go to `Il2cppBase.log` next to the game exe. A console window also opens by default (`kMirrorLogToConsole`).
 
 Menu toggle is **INSERT** (change in `include/il2cpp_base/core/config.hpp`).
 
@@ -55,10 +62,14 @@ auto* health = player->field("health");
 float hp = health->instance_value<float>(player_obj);
 
 auto* take_damage = player->method("TakeDamage", 1);
-take_damage->call<void>(player_obj, 25.0f);
+take_damage->invoke(player_obj, /* params */);
 ```
 
+Prefer `Method::invoke()` from the game thread. Direct `call<>()` jumps to the native pointer and is only for cases you already understand.
+
 ## Hook example
+
+Fill `game::kExample*` in `config.hpp`, or hook from your own feature:
 
 ```cpp
 #include "il2cpp_base/core/hooks.hpp"
@@ -67,7 +78,6 @@ using update_t = void(__fastcall*)(void*);
 update_t original_update = nullptr;
 
 void __fastcall hk_update(void* self) {
-    // stuff here
     original_update(self);
 }
 
@@ -82,19 +92,37 @@ void install_hook(il2cpp::Method* update_method) {
 
 ```
 include/il2cpp_base/
-  core/       logger, hooks, config
-  il2cpp/     resolver headers
-  ui/         imgui overlay
+  core/       logger, hooks, config, crash handler
+  il2cpp/     resolver + helpers
+  ui/         imgui overlay + menu
+  features/   example hook
 src/
   dllmain.cpp
+  core/crash_handler.cpp
   ui/overlay.cpp
+  ui/menu.cpp
+  features/example_hook.cpp
 ```
 
 ## Patterns
 
-The resolver finds IL2CPP APIs by scanning `GameAssembly.dll` and walking exports in `UnityPlayer.dll`. When Unity updates, patterns can break.
+The resolver auto-detects `il2cpp_*` APIs, in order:
 
-If init fails, open the log — it'll tell you which export or signature failed. Fix them in `include/il2cpp_base/il2cpp/resolver/detail/api.hpp`.
+1. `GetProcAddress` on `GameAssembly.dll`, `UnityPlayer.dll`, and `UserAssembly.dll`
+2. PE export-directory walk on those modules
+3. Scan for `il2cpp_*` name strings and nearby `{name, function}` pointer tables
+4. LEA/MOV slot walk in UnityPlayer
+5. Last-resort byte patterns for `domain_get` / `thread_attach`
+
+If init fails, the log lists each missing export by name. `MethodInfo::methodPointer` at offset `0` is treated as valid (that is the usual layout).
+
+## Stability notes
+
+- Don't call IL2CPP / `runtime_invoke` from Present. Queue work and run it in `pump_main_thread_features()` (WndProc). Present posts that message automatically.
+- `Method::invoke()` attaches the IL2CPP thread and logs managed exceptions instead of letting them tear the process down.
+- Static fields use `il2cpp_field_static_get_value` / `set_value`, not the FieldInfo pointer.
+- Closing the log console should not kill the game (console ctrl handler).
+- `HookManager::remove()` / `shutdown()` no longer deadlock on the internal mutex.
 
 ## Disclaimer
 

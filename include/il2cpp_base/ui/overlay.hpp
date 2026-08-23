@@ -39,7 +39,11 @@ private:
     static LRESULT WINAPI hooked_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
     bool setup_imgui(IDXGISwapChain* swap);
+    void recreate_rtv(IDXGISwapChain* swap);
     void render_frame(IDXGISwapChain* swap);
+    void request_main_thread_pump();
+
+    static constexpr UINT kMainThreadPumpMsg = WM_APP + 0x4D01;
 
     using present_fn = HRESULT(WINAPI*)(IDXGISwapChain*, UINT, UINT);
     using wndproc_fn = LRESULT(WINAPI*)(HWND, UINT, WPARAM, LPARAM);
@@ -51,12 +55,15 @@ private:
     ID3D11Device* device_ = nullptr;
     ID3D11DeviceContext* context_ = nullptr;
     ID3D11RenderTargetView* rtv_ = nullptr;
+    UINT buffer_width_ = 0;
+    UINT buffer_height_ = 0;
 
     std::mutex callback_mutex_;
     RenderCallback render_callback_;
-    std::atomic<bool> menu_visible_{ true };
+    std::atomic<bool> menu_visible_{ false };
     std::atomic<bool> imgui_ready_{ false };
     std::atomic<bool> initialized_{ false };
+    std::atomic<bool> pump_pending_{ false };
 };
 
 } // namespace il2cpp_base::ui

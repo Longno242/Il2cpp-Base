@@ -2,6 +2,10 @@
 
 #include <MinHook.h>
 
+#include "il2cpp_base/il2cpp/resolver.hpp"
+#include "il2cpp_base/ui/menu.hpp"
+#include "il2cpp_base/ui/theme.hpp"
+
 namespace il2cpp_base::ui {
 
 Overlay& Overlay::instance() {
@@ -129,26 +133,17 @@ bool Overlay::setup_imgui(IDXGISwapChain* swap) {
     DXGI_SWAP_CHAIN_DESC sc_desc{};
     swap->GetDesc(&sc_desc);
     hwnd_ = sc_desc.OutputWindow;
+    buffer_width_ = sc_desc.BufferDesc.Width;
+    buffer_height_ = sc_desc.BufferDesc.Height;
 
-    ID3D11Texture2D* back_buffer = nullptr;
-    if (FAILED(swap->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back_buffer)))) {
-        LOG_ERROR("Overlay", "GetBuffer failed");
-        return false;
-    }
-
-    device_->CreateRenderTargetView(back_buffer, nullptr, &rtv_);
-    back_buffer->Release();
+    recreate_rtv(swap);
 
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
 
-    ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 6.0f;
-    style.FrameRounding  = 4.0f;
-    style.GrabRounding   = 4.0f;
+    theme::apply();
 
     ImGui_ImplWin32_Init(hwnd_);
     ImGui_ImplDX11_Init(device_, context_);
@@ -161,10 +156,55 @@ bool Overlay::setup_imgui(IDXGISwapChain* swap) {
     return true;
 }
 
+void Overlay::recreate_rtv(IDXGISwapChain* swap) {
+    DXGI_SWAP_CHAIN_DESC desc{};
+    if (FAILED(swap->GetDesc(&desc))) {
+        return;
+    }
+
+    if (rtv_ && desc.BufferDesc.Width == buffer_width_ && desc.BufferDesc.Height == buffer_height_) {
+        return;
+    }
+
+    if (rtv_) {
+        rtv_->Release();
+        rtv_ = nullptr;
+    }
+
+    ID3D11Texture2D* back_buffer = nullptr;
+    if (FAILED(swap->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back_buffer)))) {
+        LOG_ERROR("Overlay", "GetBuffer failed");
+        return;
+    }
+
+    device_->CreateRenderTargetView(back_buffer, nullptr, &rtv_);
+    back_buffer->Release();
+    buffer_width_ = desc.BufferDesc.Width;
+    buffer_height_ = desc.BufferDesc.Height;
+}
+
+void Overlay::request_main_thread_pump() {
+    if (!hwnd_) {
+        return;
+    }
+    bool expected = false;
+    if (!pump_pending_.compare_exchange_strong(expected, true)) {
+        return;
+    }
+    if (!PostMessageW(hwnd_, kMainThreadPumpMsg, 0, 0)) {
+        pump_pending_.store(false);
+    }
+}
+
 void Overlay::render_frame(IDXGISwapChain* swap) {
     if (!imgui_ready_.load() && !setup_imgui(swap)) {
         return;
     }
+
+    recreate_rtv(swap);
+    il2cpp::ensure_thread();
+    tick_features();
+    request_main_thread_pump();
 
     if (GetAsyncKeyState(config::kMenuToggleKey) & 1) {
         menu_visible_.store(!menu_visible_.load());
@@ -175,8 +215,13 @@ void Overlay::render_frame(IDXGISwapChain* swap) {
     ImGui::NewFrame();
 
     if (menu_visible_.load()) {
-        ImGui::SetNextWindowSize(ImVec2(420, 300), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin("Il2cppBase", nullptr, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::SetNextWindowSize(ImVec2(448, 572), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(40, 40), ImGuiCond_FirstUseEver);
+        const ImGuiWindowFlags flags =
+            ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoTitleBar;
+        if (ImGui::Begin("##il2cppbase_window", nullptr, flags)) {
             RenderCallback cb;
             {
                 std::lock_guard lock(callback_mutex_);
@@ -184,6 +229,8 @@ void Overlay::render_frame(IDXGISwapChain* swap) {
             }
             if (cb) {
                 cb();
+            } else {
+                draw_menu();
             }
         }
         ImGui::End();
@@ -191,8 +238,10 @@ void Overlay::render_frame(IDXGISwapChain* swap) {
 
     ImGui::Render();
 
-    context_->OMSetRenderTargets(1, &rtv_, nullptr);
-    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    if (rtv_) {
+        context_->OMSetRenderTargets(1, &rtv_, nullptr);
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    }
 }
 
 HRESULT WINAPI Overlay::hooked_present(IDXGISwapChain* swap, UINT sync, UINT flags) {
@@ -205,6 +254,12 @@ HRESULT WINAPI Overlay::hooked_present(IDXGISwapChain* swap, UINT sync, UINT fla
 
 LRESULT WINAPI Overlay::hooked_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     auto& self = instance();
+
+    if (msg == kMainThreadPumpMsg) {
+        self.pump_pending_.store(false);
+        pump_main_thread_features();
+        return 0;
+    }
 
     if (self.menu_visible_.load() && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wparam, lparam)) {
         return TRUE;

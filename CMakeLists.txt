@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Il2cppBase LANGUAGES CXX)
+project(Il2cppBase VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -53,6 +53,7 @@ target_link_libraries(Il2cppBase PRIVATE
     imgui
     d3d11
     dxgi
+    dbghelp
 )
 
 target_compile_definitions(Il2cppBase PRIVATE
@@ -62,7 +63,7 @@ target_compile_definitions(Il2cppBase PRIVATE
 )
 
 if(MSVC)
-    target_compile_options(Il2cppBase PRIVATE /W4 /permissive-)
+    target_compile_options(Il2cppBase PRIVATE /W4 /permissive- /utf-8)
 endif()
 
 set_target_properties(Il2cppBase PROPERTIES

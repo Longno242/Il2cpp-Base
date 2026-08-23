@@ -96,17 +96,14 @@ public:
     [[nodiscard]] bool is_static() const { return (flags_ & kFieldStatic) != 0; }
 
     template<typename T>
-    T* static_value() const {
-        return reinterpret_cast<T*>(static_address());
-    }
+    T get_static() const;
+
+    template<typename T>
+    void set_static(const T& value) const;
 
     template<typename T>
     T& instance_value(void* object) const {
         return *reinterpret_cast<T*>(reinterpret_cast<std::uint8_t*>(object) + offset_);
-    }
-
-    [[nodiscard]] std::uintptr_t static_address() const {
-        return reinterpret_cast<std::uintptr_t>(field_);
     }
 
     [[nodiscard]] std::string describe() const;
@@ -141,6 +138,8 @@ public:
         using fn_t = Ret(*)(Args...);
         return reinterpret_cast<fn_t>(address_)(args...);
     }
+
+    void* invoke(void* instance, void** params = nullptr) const;
 
     [[nodiscard]] std::string describe() const;
 

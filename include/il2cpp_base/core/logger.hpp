@@ -26,7 +26,7 @@ class Logger {
 public:
     static Logger& instance();
 
-    void init(std::wstring_view log_path);
+    void init(std::wstring_view log_path, bool attach_console = true);
     void shutdown();
 
     void set_level(Level level) { level_ = level; }
@@ -55,7 +55,7 @@ inline Logger& Logger::instance() {
     return logger;
 }
 
-inline void Logger::init(std::wstring_view log_path) {
+inline void Logger::init(std::wstring_view log_path, bool attach_console) {
     std::lock_guard lock(mutex_);
 
     if (!file_.is_open()) {
@@ -64,12 +64,12 @@ inline void Logger::init(std::wstring_view log_path) {
         file_.open(log_path, std::ios::out | std::ios::trunc);
     }
 
-    if (!console_attached_ && GetConsoleWindow() == nullptr) {
+    if (attach_console && !console_attached_ && GetConsoleWindow() == nullptr) {
         if (AllocConsole()) {
             FILE* dummy = nullptr;
             freopen_s(&dummy, "CONOUT$", "w", stdout);
             freopen_s(&dummy, "CONOUT$", "w", stderr);
-            SetConsoleTitleW(L"Il2cppBase");
+            SetConsoleTitleW(L"Il2cppBase log");
             console_attached_ = true;
         }
     }

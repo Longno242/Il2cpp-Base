@@ -1,13 +1,35 @@
 #pragma once
 
-// Return-address spoofer (adapted from rrid / ret_addr_spoofer)
+// Return-address stub (adapted from rrid / ret_addr_spoofer)
 // https://github.com/lennyRBLX/ret_addr_spoofer
+//
+// Needs a jmp [rdi] gadget (FF 27). The stub leaves rdi = shell_params, and
+// rdi is non-volatile in the Microsoft x64 ABI. jmp [rdx] is not safe here.
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
+#include <Windows.h>
+
+#include "il2cpp_base/core/logger.hpp"
+
 namespace il2cpp_base::il2cpp::detail::spoofer {
+
+inline std::atomic<int>& mode() {
+    // 0 = try spoof, 1 = spoof works, -1 = fall back to direct calls
+    static std::atomic<int> value{ 0 };
+    return value;
+}
+
+inline void disable(const char* reason) {
+    int expected = 0;
+    if (mode().compare_exchange_strong(expected, -1) || mode().load() == 1) {
+        mode().store(-1);
+        LOG_WARN("IL2CPP", "Spoofer disabled (%s) - using direct API calls", reason);
+    }
+}
 
 namespace internal {
 
@@ -68,11 +90,9 @@ struct argument_remapper<Argc, std::enable_if_t<(Argc > 4)>> {
     }
 };
 
-} // namespace internal
-
 template<typename Result, typename... Arguments>
-inline Result call(const void* trampoline, Result(*fn)(Arguments...),
-                   std::type_identity_t<Arguments>... args) {
+inline Result spoof(const void* trampoline, Result(*fn)(Arguments...),
+                    std::type_identity_t<Arguments>... args) {
     struct shell_params {
         const void* trampoline;
         void* function;
@@ -80,9 +100,41 @@ inline Result call(const void* trampoline, Result(*fn)(Arguments...),
     };
 
     shell_params params{ trampoline, reinterpret_cast<void*>(fn) };
-    using mapper = internal::argument_remapper<sizeof...(Arguments)>;
+    using mapper = argument_remapper<sizeof...(Arguments)>;
     return mapper::template do_call<Result, Arguments...>(
-        internal::stub_fn(), &params, args...);
+        stub_fn(), &params, args...);
+}
+
+} // namespace internal
+
+template<typename Result, typename... Arguments>
+inline Result call(const void* trampoline, Result(*fn)(Arguments...),
+                   std::type_identity_t<Arguments>... args) {
+    if (!fn) {
+        if constexpr (std::is_void_v<Result>) {
+            return;
+        } else {
+            return Result{};
+        }
+    }
+
+    if (trampoline && mode().load() >= 0) {
+        __try {
+            if constexpr (std::is_void_v<Result>) {
+                internal::spoof(trampoline, fn, args...);
+                mode().store(1);
+                return;
+            } else {
+                Result result = internal::spoof(trampoline, fn, args...);
+                mode().store(1);
+                return result;
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            disable("spoofed call raised");
+        }
+    }
+
+    return fn(args...);
 }
 
 } // namespace il2cpp_base::il2cpp::detail::spoofer

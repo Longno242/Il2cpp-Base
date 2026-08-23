@@ -4,6 +4,7 @@
 #include <cstdio>
 
 #include "il2cpp_base/core/config.hpp"
+#include "il2cpp_base/core/logger.hpp"
 #include "il2cpp_base/il2cpp/resolver/detail/api.hpp"
 #include "il2cpp_base/il2cpp/resolver/detail/scan.hpp"
 #include "il2cpp_base/il2cpp/resolver/detail/spoofer.hpp"
@@ -21,19 +22,36 @@ inline Field::Field(std::string name, std::string type, std::size_t offset,
     , type_(std::move(type))
     , offset_(offset)
     , flags_(flags)
-    , field_(field) {
-    const auto base = detail::module_base(config::kGameAssemblyModule);
-    if (is_static() && field_) {
-        static_rva_ = detail::to_rva(reinterpret_cast<std::uintptr_t>(field_), base);
+    , field_(field) {}
+
+template<typename T>
+inline T Field::get_static() const {
+    T value{};
+    auto& c = detail::ctx();
+    if (c.api.field_static_get_value && field_) {
+        detail::spoofer::call(c.jmp_rdx, c.api.field_static_get_value,
+                              const_cast<void*>(field_), &value);
+    }
+    return value;
+}
+
+template<typename T>
+inline void Field::set_static(const T& value) const {
+    T copy = value;
+    auto& c = detail::ctx();
+    if (c.api.field_static_set_value && field_) {
+        detail::spoofer::call(c.jmp_rdx, c.api.field_static_set_value,
+                              const_cast<void*>(field_), &copy);
     }
 }
 
 inline std::string Field::describe() const {
     char buf[128]{};
     if (is_static()) {
-        snprintf(buf, sizeof(buf), "static RVA 0x%llX", static_cast<unsigned long long>(static_rva_));
+        snprintf(buf, sizeof(buf), "static %s %s", type_.c_str(), name_.c_str());
     } else {
-        snprintf(buf, sizeof(buf), "instance +0x%llX", static_cast<unsigned long long>(offset_));
+        snprintf(buf, sizeof(buf), "%s %s (+0x%llX)", type_.c_str(), name_.c_str(),
+                 static_cast<unsigned long long>(offset_));
     }
     return buf;
 }
@@ -54,6 +72,34 @@ inline Method::Method(std::string name, std::string return_type,
     if (address_) {
         rva_ = detail::to_rva(reinterpret_cast<std::uintptr_t>(address_), base);
     }
+}
+
+inline void* Method::invoke(void* instance, void** params) const {
+    auto& c = detail::ctx();
+    if (!method_info_ || !c.api.runtime_invoke) {
+        return nullptr;
+    }
+    if (c.api.thread_attach && c.api.domain_get) {
+        void* domain = detail::spoofer::call(c.jmp_rdx, c.api.domain_get);
+        detail::spoofer::call(c.jmp_rdx, c.api.thread_attach, domain);
+    }
+    void* exception = nullptr;
+    void* result = detail::spoofer::call(c.jmp_rdx, c.api.runtime_invoke,
+                                         method_info_, instance, params, &exception);
+    if (exception) {
+        const char* type_name = "managed exception";
+        if (c.api.object_get_class && c.api.get_class_name) {
+            void* klass = detail::spoofer::call(c.jmp_rdx, c.api.object_get_class, exception);
+            if (klass) {
+                if (const char* name = detail::spoofer::call(c.jmp_rdx, c.api.get_class_name, klass)) {
+                    type_name = name;
+                }
+            }
+        }
+        LOG_ERROR("IL2CPP", "invoke(%s) raised %s", name_.c_str(), type_name);
+        return nullptr;
+    }
+    return result;
 }
 
 inline std::string Method::describe() const {

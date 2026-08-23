@@ -7,6 +7,7 @@
 
 #include "il2cpp_base/core/config.hpp"
 #include "il2cpp_base/core/logger.hpp"
+#include "il2cpp_base/il2cpp/resolver/detail/exports.hpp"
 #include "il2cpp_base/il2cpp/resolver/detail/scan.hpp"
 #include "il2cpp_base/il2cpp/resolver/detail/spoofer.hpp"
 #include "il2cpp_base/il2cpp/resolver/types.hpp"
@@ -45,6 +46,19 @@ struct ApiTable {
     bool (*is_method_instance)(const void* method) = nullptr;
     void* (*get_class_nested_types)(void* klass, void** iter) = nullptr;
     void (*free_memory)(void* ptr) = nullptr;
+    void (*field_static_get_value)(void* field, void* dest) = nullptr;
+    void (*field_static_set_value)(void* field, void* value) = nullptr;
+    void* (*runtime_invoke)(const void* method, void* obj, void** params, void** exc) = nullptr;
+    void* (*object_new)(void* klass) = nullptr;
+    void* (*string_new)(const char* str) = nullptr;
+    const wchar_t* (*string_chars)(void* str) = nullptr;
+    int (*string_length)(void* str) = nullptr;
+    void* (*object_unbox)(void* obj) = nullptr;
+    void* (*value_box)(void* klass, void* data) = nullptr;
+    void* (*object_get_class)(void* obj) = nullptr;
+    void* (*object_to_string)(void* obj, void** exc) = nullptr;
+    void (*runtime_class_init)(void* klass) = nullptr;
+    void* (*thread_current)() = nullptr;
 };
 
 struct Context {
@@ -61,65 +75,9 @@ inline Context& ctx() {
     return instance;
 }
 
-inline void* find_export_by_name(const std::string& name) {
-    static std::unordered_map<std::string, void*> cache;
-    static bool scanned = false;
-
-    if (scanned) {
-        const auto it = cache.find(name);
-        return it != cache.end() ? it->second : nullptr;
-    }
-
-    void* start = scan_module(config::kUnityPlayerModule,
-        "\x48\x89\x5C\x24\x00\x48\x8D\x15\x00\x00\x00\x00\xB3", "xxxx?xxx????x");
-    void* end = scan_module(config::kUnityPlayerModule,
-        "\xE8\x00\x00\x00\x00\x48\x8B\x5C\x24\x00\x32\xC0\x48\xC7\x05", "x????xxxx?xxxxx");
-
-    if (!start || !end) {
-        LOG_ERROR("IL2CPP", "Failed to locate UnityPlayer export table scan region");
-        scanned = true;
-        return nullptr;
-    }
-
-    void* first_match = nullptr;
-    auto* cursor = static_cast<std::uint8_t*>(start);
-
-    while (cursor < static_cast<std::uint8_t*>(end)) {
-        auto* lea = static_cast<std::uint8_t*>(
-            scan(reinterpret_cast<std::uintptr_t>(cursor),
-                 reinterpret_cast<std::uintptr_t>(end),
-                 "\x48\x8D\x15", "xxx"));
-        if (!lea) {
-            break;
-        }
-
-        const auto fn_name = std::string(reinterpret_cast<char*>(lea + *reinterpret_cast<std::int32_t*>(lea + 3) + 7));
-
-        auto* mov = static_cast<std::uint8_t*>(
-            scan(reinterpret_cast<std::uintptr_t>(lea + 1),
-                 reinterpret_cast<std::uintptr_t>(end),
-                 "\x48\x89\x05", "xxx"));
-        if (!mov) {
-            break;
-        }
-
-        void* fn_addr = *reinterpret_cast<void**>(mov + *reinterpret_cast<std::int32_t*>(mov + 3) + 7);
-        cache[fn_name] = fn_addr;
-
-        if (name == fn_name) {
-            first_match = fn_addr;
-        }
-
-        cursor = mov + 1;
-    }
-
-    scanned = true;
-    LOG_DEBUG("IL2CPP", "Scanned %zu il2cpp exports from UnityPlayer", cache.size());
-    return first_match;
-}
-
 inline bool resolve_api() {
     auto& c = ctx();
+    build_export_cache();
 
 #define RESOLVE_PATTERN(field, pattern, mask) \
     c.api.field = reinterpret_cast<decltype(c.api.field)>( \
@@ -130,16 +88,28 @@ inline bool resolve_api() {
     c.api.field = reinterpret_cast<decltype(c.api.field)>(find_export_by_name(export_name)); \
     if (!c.api.field) LOG_ERROR("IL2CPP", "Missing export: " export_name)
 
-    RESOLVE_PATTERN(domain_get,
-        "\x48\x83\xEC\x00\x48\x63\x05\x00\x00\x00\x00\x48\x8D\x0D\x00\x00\x00\x00"
-        "\x4C\x8B\x05\x00\x00\x00\x00\x48\x8D\x15\x00\x00\x00\x00\x8B\x0C\x08\x48\x8B\x44\x24\x00"
-        "\x48\xC1\xE1\x00\x48\x03\xCA\x48\x3B\xC1\x73\x00\x48\x8B\x44\x24\x00\x48\x3B\xC2\x73\x00"
-        "\x49\x63\x40\x00\x42\x8B\x4C\x00\x00\x48\x8B\x44\x24\x00\x49\x8D\x14\x88\x48\x3B\xC2\x0F\x83",
-        "xxx?xxx????xxx????xxx????xxx????xxxxxxx?xxx?xxxxxxx?xxxx?xxxx?xxx?xxxx?xxxx?xxxxxxxxx");
+#define RESOLVE_EXPORT_OPTIONAL(field, export_name) \
+    c.api.field = reinterpret_cast<decltype(c.api.field)>(find_export_by_name(export_name)); \
+    if (!c.api.field) LOG_DEBUG("IL2CPP", "Optional export missing: " export_name)
 
-    RESOLVE_PATTERN(thread_attach,
-        "\x40\x56\x48\x83\xEC\x00\x48\x8B\xF1\x48\x8B\x0D\x00\x00\x00\x00\x8B\x09",
-        "xxxxx?xxxxxx????xx");
+    c.api.domain_get = reinterpret_cast<decltype(c.api.domain_get)>(
+        find_export_by_name("il2cpp_domain_get"));
+    if (!c.api.domain_get) {
+        RESOLVE_PATTERN(domain_get,
+            "\x48\x83\xEC\x00\x48\x63\x05\x00\x00\x00\x00\x48\x8D\x0D\x00\x00\x00\x00"
+            "\x4C\x8B\x05\x00\x00\x00\x00\x48\x8D\x15\x00\x00\x00\x00\x8B\x0C\x08\x48\x8B\x44\x24\x00"
+            "\x48\xC1\xE1\x00\x48\x03\xCA\x48\x3B\xC1\x73\x00\x48\x8B\x44\x24\x00\x48\x3B\xC2\x73\x00"
+            "\x49\x63\x40\x00\x42\x8B\x4C\x00\x00\x48\x8B\x44\x24\x00\x49\x8D\x14\x88\x48\x3B\xC2\x0F\x83",
+            "xxx?xxx????xxx????xxx????xxx????xxxxxxx?xxx?xxxxxxx?xxxx?xxxx?xxx?xxxx?xxxx?xxxxxxxxx");
+    }
+
+    c.api.thread_attach = reinterpret_cast<decltype(c.api.thread_attach)>(
+        find_export_by_name("il2cpp_thread_attach"));
+    if (!c.api.thread_attach) {
+        RESOLVE_PATTERN(thread_attach,
+            "\x40\x56\x48\x83\xEC\x00\x48\x8B\xF1\x48\x8B\x0D\x00\x00\x00\x00\x8B\x09",
+            "xxxxx?xxxxxx????xx");
+    }
 
     RESOLVE_EXPORT(get_assemblies, "il2cpp_domain_get_assemblies");
     RESOLVE_EXPORT(get_image, "il2cpp_assembly_get_image");
@@ -170,9 +140,23 @@ inline bool resolve_api() {
     RESOLVE_EXPORT(get_method_flags, "il2cpp_method_get_flags");
     RESOLVE_EXPORT(is_method_instance, "il2cpp_method_is_instance");
     RESOLVE_EXPORT(get_class_nested_types, "il2cpp_class_get_nested_types");
+    RESOLVE_EXPORT_OPTIONAL(field_static_get_value, "il2cpp_field_static_get_value");
+    RESOLVE_EXPORT_OPTIONAL(field_static_set_value, "il2cpp_field_static_set_value");
+    RESOLVE_EXPORT_OPTIONAL(runtime_invoke, "il2cpp_runtime_invoke");
+    RESOLVE_EXPORT_OPTIONAL(object_new, "il2cpp_object_new");
+    RESOLVE_EXPORT_OPTIONAL(string_new, "il2cpp_string_new");
+    RESOLVE_EXPORT_OPTIONAL(string_chars, "il2cpp_string_chars");
+    RESOLVE_EXPORT_OPTIONAL(string_length, "il2cpp_string_length");
+    RESOLVE_EXPORT_OPTIONAL(object_unbox, "il2cpp_object_unbox");
+    RESOLVE_EXPORT_OPTIONAL(value_box, "il2cpp_value_box");
+    RESOLVE_EXPORT_OPTIONAL(object_get_class, "il2cpp_object_get_class");
+    RESOLVE_EXPORT_OPTIONAL(object_to_string, "il2cpp_object_to_string");
+    RESOLVE_EXPORT_OPTIONAL(runtime_class_init, "il2cpp_runtime_class_init");
+    RESOLVE_EXPORT_OPTIONAL(thread_current, "il2cpp_thread_current");
 
 #undef RESOLVE_PATTERN
 #undef RESOLVE_EXPORT
+#undef RESOLVE_EXPORT_OPTIONAL
 
     void* ctor_scan = scan_module(config::kGameAssemblyModule,
         "\xF3\x0F\x11\x4C\x24\x00\x4C\x8B\xDC\x48\x81\xEC\x00\x00\x00\x00\x49\x8D\x43\x00\x49\x89\x4B",
@@ -193,26 +177,40 @@ inline bool resolve_api() {
                  "\x48\x8B\x48", "xxx"));
         if (mov) {
             c.method_pointer_offset = mov[3];
-            LOG_DEBUG("IL2CPP", "MethodInfo::methodPointer offset = 0x%X", c.method_pointer_offset);
         }
-    } else {
-        LOG_ERROR("IL2CPP", "Failed to resolve MethodInfo::methodPointer offset");
+    }
+    // Offset 0 is valid - MethodInfo::methodPointer is the first field on most Unity builds.
+    // The old check treated 0 as "missing" and failed every resolve.
+    LOG_INFO("IL2CPP", "MethodInfo::methodPointer offset = 0x%X", c.method_pointer_offset);
+
+    struct Required {
+        const char* name;
+        void* ptr;
+    };
+    const Required required[] = {
+        { "il2cpp_domain_get", reinterpret_cast<void*>(c.api.domain_get) },
+        { "il2cpp_thread_attach", reinterpret_cast<void*>(c.api.thread_attach) },
+        { "il2cpp_domain_get_assemblies", reinterpret_cast<void*>(c.api.get_assemblies) },
+        { "il2cpp_assembly_get_image", reinterpret_cast<void*>(c.api.get_image) },
+        { "il2cpp_image_get_name", reinterpret_cast<void*>(c.api.get_image_name) },
+        { "il2cpp_class_from_name", reinterpret_cast<void*>(c.api.get_class_by_name) },
+        { "il2cpp_class_get_name", reinterpret_cast<void*>(c.api.get_class_name) },
+        { "il2cpp_class_get_methods", reinterpret_cast<void*>(c.api.get_methods) },
+        { "il2cpp_class_get_fields", reinterpret_cast<void*>(c.api.get_fields) },
+        { "il2cpp_class_get_method_from_name", reinterpret_cast<void*>(c.api.get_method_by_name) },
+        { "il2cpp_class_get_field_from_name", reinterpret_cast<void*>(c.api.get_field_by_name) },
+    };
+
+    bool ok = true;
+    for (const auto& item : required) {
+        if (!item.ptr) {
+            LOG_ERROR("IL2CPP", "Missing %s", item.name);
+            ok = false;
+        }
     }
 
-    const bool ok =
-        c.api.domain_get && c.api.thread_attach && c.api.get_assemblies && c.api.get_image &&
-        c.api.get_image_name && c.api.get_class_count && c.api.get_class_by_name && c.api.get_class &&
-        c.api.get_class_name && c.api.get_class_namespace && c.api.is_class_enum &&
-        c.api.is_class_valuetype && c.api.get_fields && c.api.get_field_by_name &&
-        c.api.get_field_name && c.api.get_field_flags && c.api.get_field_offset &&
-        c.api.get_field_type && c.api.get_type_name && c.api.get_method_by_name &&
-        c.api.get_methods && c.api.get_method_name && c.api.get_method_return_type &&
-        c.api.get_method_param_count && c.api.get_method_param_name && c.api.is_class_generic &&
-        c.api.get_method_param_type && c.api.free_memory && c.api.get_method_flags &&
-        c.api.is_method_instance && c.api.get_class_nested_types && c.method_pointer_offset;
-
     if (!ok) {
-        LOG_FATAL("IL2CPP", "API resolution incomplete — patterns may need updating for this game build");
+        LOG_FATAL("IL2CPP", "API resolution incomplete - auto-scan could not find required exports");
     }
 
     return ok;

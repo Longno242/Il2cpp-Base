@@ -78,9 +78,11 @@ inline void HookManager::shutdown() {
         return;
     }
 
-    disable_all();
-
     for (auto& [_, entry] : entries_) {
+        if (entry.enabled) {
+            MH_DisableHook(entry.target);
+            entry.enabled = false;
+        }
         MH_RemoveHook(entry.target);
     }
     entries_.clear();
@@ -169,7 +171,10 @@ inline bool HookManager::remove(const char* name) {
         return false;
     }
 
-    disable(name);
+    if (it->second.enabled) {
+        MH_DisableHook(it->second.target);
+        it->second.enabled = false;
+    }
     MH_RemoveHook(it->second.target);
     entries_.erase(it);
     return true;

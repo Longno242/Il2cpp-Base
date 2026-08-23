@@ -1,15 +1,15 @@
 #include <Windows.h>
 
-#include <imgui.h>
-
 #include <filesystem>
 #include <string>
-#include <thread>
 
 #include "il2cpp_base/core/config.hpp"
+#include "il2cpp_base/core/crash_handler.hpp"
 #include "il2cpp_base/core/hooks.hpp"
 #include "il2cpp_base/core/logger.hpp"
+#include "il2cpp_base/features/example_hook.hpp"
 #include "il2cpp_base/il2cpp/resolver.hpp"
+#include "il2cpp_base/ui/menu.hpp"
 #include "il2cpp_base/ui/overlay.hpp"
 
 namespace {
@@ -32,27 +32,9 @@ void wait_for_module(const char* name, DWORD timeout_ms = 120000) {
     }
 }
 
-void draw_menu() {
-    ImGui::Text("IL2CPP resolver: %s", il2cpp::ready() ? "ready" : "not ready");
-
-    if (il2cpp::ready()) {
-        ImGui::Text("Assemblies: %zu", il2cpp::images().size());
-
-        if (ImGui::BeginChild("assemblies", ImVec2(0, 120), true)) {
-            for (const il2cpp::Image* img : il2cpp::images()) {
-                ImGui::Text("%s", img->name().c_str());
-            }
-        }
-        ImGui::EndChild();
-    }
-
-    ImGui::Separator();
-    ImGui::TextDisabled("INSERT toggles this menu");
-    ImGui::TextDisabled("Edit src/dllmain.cpp to add your mod logic");
-}
-
 DWORD WINAPI main_thread(LPVOID module) {
-    log::Logger::instance().init(log_path());
+    log::Logger::instance().init(log_path(), config::kMirrorLogToConsole);
+    crash::install();
     LOG_INFO("Core", "Il2cppBase loaded");
 
     wait_for_module(config::kGameAssemblyModule);
@@ -61,14 +43,19 @@ DWORD WINAPI main_thread(LPVOID module) {
         FreeLibraryAndExitThread(static_cast<HMODULE>(module), 1);
         return 1;
     }
+    wait_for_module(config::kUnityPlayerModule, 15000);
 
     if (!il2cpp::init()) {
-        LOG_FATAL("Core", "IL2CPP resolver failed — check patterns for this game build");
+        LOG_FATAL("Core", "IL2CPP resolver failed - see missing export names above");
     }
 
-    ui::Overlay::instance().set_render_callback(draw_menu);
+    ui::Overlay::instance().set_render_callback(ui::draw_menu);
     if (!ui::Overlay::instance().init()) {
         LOG_FATAL("Core", "Overlay init failed");
+    }
+
+    if (!features::install()) {
+        LOG_WARN("Core", "Example hook install failed (see Hooks tab)");
     }
 
     LOG_INFO("Core", "Initialization complete");
@@ -85,8 +72,10 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
             CloseHandle(handle);
         }
     } else if (reason == DLL_PROCESS_DETACH) {
+        features::shutdown();
         il2cpp_base::ui::Overlay::instance().shutdown();
         il2cpp_base::hooks::HookManager::instance().shutdown();
+        il2cpp_base::crash::shutdown();
         il2cpp_base::log::Logger::instance().shutdown();
     }
     return TRUE;

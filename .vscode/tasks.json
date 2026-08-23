@@ -15,11 +15,10 @@
         {
             "label": "CMake: Configure",
             "type": "shell",
-            "command": "cmake",
+            "command": "powershell",
             "args": [
-                "-B", "build",
-                "-G", "Visual Studio 18 2026",
-                "-A", "x64"
+                "-ExecutionPolicy", "Bypass",
+                "-File", "${workspaceFolder}/scripts/configure.ps1"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
