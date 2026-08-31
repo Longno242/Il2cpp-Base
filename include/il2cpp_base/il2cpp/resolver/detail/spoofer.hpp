@@ -24,9 +24,8 @@ inline std::atomic<int>& mode() {
 }
 
 inline void disable(const char* reason) {
-    int expected = 0;
-    if (mode().compare_exchange_strong(expected, -1) || mode().load() == 1) {
-        mode().store(-1);
+    const int previous = mode().exchange(-1);
+    if (previous >= 0) {
         LOG_WARN("IL2CPP", "Spoofer disabled (%s) - using direct API calls", reason);
     }
 }
