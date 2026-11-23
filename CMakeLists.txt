@@ -1,73 +1,56 @@
-cmake_minimum_required(VERSION 3.20)
-project(Il2cppBase VERSION 1.1.0 LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.21)
+project(Il2cppBase VERSION 2.0.0 LANGUAGES C CXX)
+
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "Build for x64. Unity IL2CPP games on Windows are 64-bit.")
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-# ---------------------------------------------------------------------------
-# Dependencies (run scripts/setup_deps.ps1 first)
-# ---------------------------------------------------------------------------
-set(VENDOR_DIR "${CMAKE_SOURCE_DIR}/vendor")
+set(VENDOR ${CMAKE_SOURCE_DIR}/vendor)
+foreach(dep imgui minhook)
+    if(NOT EXISTS ${VENDOR}/${dep})
+        message(FATAL_ERROR "vendor/${dep} is missing. Run .\\build.ps1 once to fetch dependencies.")
+    endif()
+endforeach()
 
-if(NOT EXISTS "${VENDOR_DIR}/minhook/CMakeLists.txt")
-    message(FATAL_ERROR "MinHook not found. Run: scripts/setup_deps.ps1")
-endif()
-
-if(NOT EXISTS "${VENDOR_DIR}/imgui/imgui.h")
-    message(FATAL_ERROR "Dear ImGui not found. Run: scripts/setup_deps.ps1")
-endif()
-
-add_subdirectory("${VENDOR_DIR}/minhook" EXCLUDE_FROM_ALL)
-
-set(IMGUI_DIR "${VENDOR_DIR}/imgui")
-set(IMGUI_SOURCES
-    "${IMGUI_DIR}/imgui.cpp"
-    "${IMGUI_DIR}/imgui_draw.cpp"
-    "${IMGUI_DIR}/imgui_tables.cpp"
-    "${IMGUI_DIR}/imgui_widgets.cpp"
-    "${IMGUI_DIR}/backends/imgui_impl_win32.cpp"
-    "${IMGUI_DIR}/backends/imgui_impl_dx11.cpp"
+add_library(minhook STATIC
+    ${VENDOR}/minhook/src/buffer.c
+    ${VENDOR}/minhook/src/hook.c
+    ${VENDOR}/minhook/src/trampoline.c
+    ${VENDOR}/minhook/src/hde/hde64.c
 )
+target_include_directories(minhook PUBLIC ${VENDOR}/minhook/include PRIVATE ${VENDOR}/minhook/src)
 
-add_library(imgui STATIC ${IMGUI_SOURCES})
-target_include_directories(imgui PUBLIC
-    "${IMGUI_DIR}"
-    "${IMGUI_DIR}/backends"
+add_library(imgui STATIC
+    ${VENDOR}/imgui/imgui.cpp
+    ${VENDOR}/imgui/imgui_draw.cpp
+    ${VENDOR}/imgui/imgui_tables.cpp
+    ${VENDOR}/imgui/imgui_widgets.cpp
+    ${VENDOR}/imgui/backends/imgui_impl_win32.cpp
+    ${VENDOR}/imgui/backends/imgui_impl_dx11.cpp
+    ${VENDOR}/imgui/misc/cpp/imgui_stdlib.cpp
 )
-target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
+target_include_directories(imgui PUBLIC ${VENDOR}/imgui ${VENDOR}/imgui/backends)
+target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS IMGUI_DEFINE_MATH_OPERATORS)
 
-# ---------------------------------------------------------------------------
-# Mod DLL
-# ---------------------------------------------------------------------------
-file(GLOB_RECURSE MOD_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/src/*.cpp"
-)
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp src/*.hpp)
+add_library(Il2cppBase SHARED ${SOURCES})
+source_group(TREE ${CMAKE_SOURCE_DIR}/src FILES ${SOURCES})
 
-add_library(Il2cppBase SHARED ${MOD_SOURCES})
-target_include_directories(Il2cppBase PRIVATE
-    "${CMAKE_SOURCE_DIR}/include"
-)
-
-target_link_libraries(Il2cppBase PRIVATE
-    minhook
-    imgui
-    d3d11
-    dxgi
-    dbghelp
-)
-
+target_include_directories(Il2cppBase PRIVATE src)
 target_compile_definitions(Il2cppBase PRIVATE
+    IL2CPP_BASE_VERSION="${PROJECT_VERSION}"
     WIN32_LEAN_AND_MEAN
     NOMINMAX
-    IL2CPP_BASE_EXPORTS
 )
-
-if(MSVC)
-    target_compile_options(Il2cppBase PRIVATE /W4 /permissive- /utf-8)
-endif()
+target_compile_options(Il2cppBase PRIVATE /W4 /permissive- /utf-8 /MP)
+target_link_libraries(Il2cppBase PRIVATE imgui minhook d3d11 dxgi dbghelp)
 
 set_target_properties(Il2cppBase PROPERTIES
-    OUTPUT_NAME "Il2cppBase"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/bin/Debug
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/bin/Release
 )

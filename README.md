@@ -1,129 +1,177 @@
 # Il2cpp Base
 
-C++ starter project for IL2CPP Unity mods. Built for single-player games.
+C++ base for IL2CPP Unity mods. Single-player games only.
 
-Comes with a runtime class/method resolver (based on my old [rrid](https://github.com/Longno242/IL2CPP-Dumper/blob/main/IL2CPP%20Dumper/rrid.hpp) work), MinHook, ImGui overlay, crash handler, and file logging.
+You get a runtime IL2CPP resolver (no dumper needed), MinHook, a DX11 ImGui menu, a class explorer, a crash handler and logging.
 
-**Mono games won't work** — if the game does not use `GameAssembly.dll`, use [Mono-Base](https://github.com/Longno242/Mono-Base) instead.
+Mono games won't work. If the game has no `GameAssembly.dll`, use [Mono-Base](https://github.com/Longno242/Mono-Base).
 
-## Requirements
+## Build
 
-- Windows 10/11 x64
-- Visual Studio 2022 or newer (C++ desktop workload)
-- CMake 3.20+
-- Git
-
-## Setup
+Needs Windows x64, Visual Studio 2022 or 2026 with the C++ workload, CMake 3.21+ and Git.
 
 ```powershell
 git clone https://github.com/Longno242/Il2cpp-Base.git
 cd Il2cpp-Base
-.\scripts\setup_deps.ps1
+.\build.ps1
 ```
 
-That script pulls pinned MinHook **v1.3.4** and Dear ImGui **v1.92.9b** into `vendor/`. Re-run it to refresh an existing clone.
+The first run downloads Dear ImGui v1.92.9b and MinHook v1.3.4 into `vendor/`. After that it just builds.
 
-## Build
+- `.\build.ps1 -Debug` for a debug build
+- `.\build.ps1 -Clean` to wipe `build/` first
 
-Open the folder in VS Code and run the **CMake: Build Release** task, or from a terminal:
+Output: `build/bin/Release/Il2cppBase.dll`
 
-```powershell
-.\scripts\configure.ps1
-cmake --build build --config Release
-```
+## Use
 
-`configure.ps1` tries Visual Studio 2026, then 2022. You can also pass a generator yourself:
+Inject the DLL with whatever injector you use. It waits for `GameAssembly.dll` on its own.
 
-```powershell
-cmake -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release
-```
+- **Insert** opens the menu (`kMenuKey` in `src/config.hpp`)
+- The log goes to `Il2cppBase.log` next to the game exe, and to a console if `kShowConsole` is on
+- While the menu is open the game's cursor is unlocked and clicks over the menu don't reach the game. Both can be turned off in Settings.
 
-DLL output: `build/bin/Release/Il2cppBase.dll`
+## What's in the menu
 
-## Inject
+| Tab | |
+| --- | --- |
+| Home | game info, quick toggles, getting started |
+| Player | local player info, lock health / stamina / ammo / money |
+| Movement | speed hack, custom gravity, move speed and jump force |
+| Player List | every object of your player class, distance, teleport |
+| Visuals | ESP (names, distance, snaplines), FOV, crosshair |
+| World | no fog, FPS unlock, VSync |
+| Explorer | browse assemblies, classes, fields and methods |
+| Log | live log |
+| Settings | UI scale, cursor and input options |
 
-Load the DLL after `GameAssembly.dll` is in memory. Use whatever injector you already use.
+Speed, gravity, FOV, fog and FPS use plain UnityEngine APIs and work in most games straight away.
 
-Logs go to `Il2cppBase.log` next to the game exe. A console window also opens by default (`kMirrorLogToConsole`).
+Everything player-related needs your game's player class. Find it in Explorer, type it into Player List and hit Apply (or set `kPlayerClass` in `src/config.hpp`). The closest one to the camera counts as you.
 
-Menu toggle is **INSERT** (change in `include/il2cpp_base/core/config.hpp`).
+The Player and Movement locks write a field on that class every frame. The field names (`health`, `moveSpeed`, ...) are guesses and can be edited in the menu. Each one shows whether it found the field.
 
-## Resolver example
+## Adding to the menu
+
+Each tab is its own file in `src/tabs/`, and `src/menu.cpp` lists them in sidebar order. A tab is a function, a section is a card:
 
 ```cpp
-#include "il2cpp_base/il2cpp/resolver.hpp"
+// src/tabs/combat.cpp
+void tabs::combat() {
+    ui::section("Aimbot", [] {
+        ui::toggle("Enabled", &aim::enabled);
+        ui::slider("FOV", &aim::fov, 1.0f, 180.0f, "%.0f");
+        ui::combo("Bone", &aim::bone, { "Head", "Neck", "Chest" });
+        if (ui::button("Reset")) {
+            aim::fov = 90.0f;
+            ui::notify("FOV reset");
+        }
+    });
+}
 
-il2cpp::init();
-
-auto* player = il2cpp::find_class("Assembly-CSharp.dll", "PlayerController", "Game");
-auto* health = player->field("health");
-
-float hp = health->instance_value<float>(player_obj);
-
-auto* take_damage = player->method("TakeDamage", 1);
-take_damage->invoke(player_obj, /* params */);
+// src/menu.cpp (also declare combat() in src/tabs/tabs.hpp)
+constexpr ui::Tab kTabs[] = {
+    { "Home", tabs::home },
+    { "Combat", tabs::combat },
+    // ...
+};
 ```
 
-Prefer `Method::invoke()` from the game thread. Direct `call<>()` jumps to the native pointer and is only for cases you already understand.
+Sections fill two columns automatically. Pass `1` as the third `Tab` field for a single full-width column.
 
-## Hook example
+Widgets (`src/ui/widgets.hpp`):
 
-Fill `game::kExample*` in `config.hpp`, or hook from your own feature:
+| Widget | |
+| --- | --- |
+| `toggle(label, &bool)` | on/off switch |
+| `slider(label, &float/&int, min, max, fmt)` | slider |
+| `button(label, width)` | full width unless you give one |
+| `combo(label, &int, { ... })` | dropdown |
+| `segmented(id, &int, { ... })` | inline tab picker |
+| `color(label, float[4])` | color picker |
+| `input(hint, &std::string)` | text box |
+| `text(fmt, ...)` / `value(label, fmt, ...)` | dim text / label + value row |
+| `notify(fmt, ...)` | toast in the corner, safe from any thread |
+
+Plain ImGui calls work anywhere inside a section too. Colors live in `src/ui/style.hpp`.
+
+## Adding a feature
+
+1. Make `src/features/my_feature.hpp/.cpp` (any `.cpp` under `src/` is picked up by CMake)
+2. Call its `install()` and `update()` from `src/features/features.cpp`
+3. Draw its settings from a tab in `src/tabs/`
+
+`src/features/world.cpp` is a short complete example. `src/unity/unity.hpp` wraps the common UnityEngine calls (camera, transforms, `FindObjectsOfType`, screen, time, physics).
+
+### Threads
+
+The menu draws on the render thread. Calling into the game from there will crash sooner or later. `install()` and `update()` already run on Unity's main thread. From a button, queue the work:
 
 ```cpp
-#include "il2cpp_base/core/hooks.hpp"
-
-using update_t = void(__fastcall*)(void*);
-update_t original_update = nullptr;
-
-void __fastcall hk_update(void* self) {
-    original_update(self);
-}
-
-void install_hook(il2cpp::Method* update_method) {
-    auto& hooks = il2cpp_base::hooks::HookManager::instance();
-    hooks.create("Player.Update", update_method->address(), &hk_update, &original_update);
-    hooks.enable("Player.Update");
+if (ui::button("Give money")) {
+    main_thread::post([] {
+        money_field->set_static<int>(999999);
+    });
 }
 ```
 
-## Project structure
+### Resolver
+
+```cpp
+il2cpp::Image* game = il2cpp::image("Assembly-CSharp.dll");
+il2cpp::Class* player = game->klass("PlayerController", "Game");
+
+float hp = player->field("health")->instance_value<float>(player_obj);
+player->method("TakeDamage", 1)->invoke(player_obj, args);
+```
+
+Handy helpers in `src/il2cpp/helpers.hpp`: `search_class` (every assembly), `method_with_params` (pick an overload), `get_property` / `set_property`, `type_object`, `array_to_vector`, `gc_hold` / `gc_release`, `resolve_icall`, `object_to_string`.
+
+Use the Explorer tab in the menu to browse assemblies, classes, fields (with offsets) and methods (with RVAs). Click a row to copy the name.
+
+### Hooks
+
+```cpp
+using update_fn = void (*)(void* self, const void* method);
+update_fn original = nullptr;
+
+void hk_update(void* self, const void* method) {
+    original(self, method);
+}
+
+hooks::install("Player.Update", player->method("Update", 0)->address(), &hk_update, &original);
+hooks::set_enabled("Player.Update", false);
+```
+
+IL2CPP methods take `this` first (instance methods only) and a `MethodInfo*` last. `src/features/example_hook.cpp` has a full one with an on/off toggle in the menu.
+
+## Layout
 
 ```
-include/il2cpp_base/
-  core/       logger, hooks, config, crash handler
-  il2cpp/     resolver + helpers
-  ui/         imgui overlay + menu
-  features/   example hook
 src/
-  dllmain.cpp
-  core/crash_handler.cpp
-  ui/overlay.cpp
-  ui/menu.cpp
-  features/example_hook.cpp
+  main.cpp        startup and shutdown
+  config.hpp      name, menu key, log file, player class
+  menu.cpp        sidebar tab list
+  tabs/           one file per tab
+  features/       the actual cheats, run on the main thread
+  unity/          UnityEngine wrappers
+  core/           logger, hooks, main thread queue, crash handler
+  il2cpp/         resolver
+  ui/             overlay, widgets, style, explorer and log pages
 ```
 
-## Patterns
+## How the resolver finds IL2CPP
 
-The resolver auto-detects `il2cpp_*` APIs, in order:
+Tried in order until it has everything:
 
-1. `GetProcAddress` on `GameAssembly.dll`, `UnityPlayer.dll`, and `UserAssembly.dll`
-2. PE export-directory walk on those modules
-3. Scan for `il2cpp_*` name strings and nearby `{name, function}` pointer tables
-4. LEA/MOV slot walk in UnityPlayer
-5. Last-resort byte patterns for `domain_get` / `thread_attach`
+1. `GetProcAddress` on `GameAssembly.dll`, `UnityPlayer.dll`, `UserAssembly.dll`
+2. Walking their export tables
+3. Scanning for `il2cpp_*` name strings and the `{name, function}` tables next to them
+4. LEA/MOV slots in UnityPlayer
+5. Byte patterns for `domain_get` / `thread_attach`
 
-If init fails, the log lists each missing export by name. `MethodInfo::methodPointer` at offset `0` is treated as valid (that is the usual layout).
-
-## Stability notes
-
-- Don't call IL2CPP / `runtime_invoke` from Present. Queue work and run it in `pump_main_thread_features()` (WndProc). Present posts that message automatically.
-- `Method::invoke()` attaches the IL2CPP thread and logs managed exceptions instead of letting them tear the process down.
-- Static fields use `il2cpp_field_static_get_value` / `set_value`, not the FieldInfo pointer.
-- Closing the log console should not kill the game (console ctrl handler).
-- `HookManager::remove()` / `shutdown()` no longer deadlock on the internal mutex.
+If init fails the log names every export it couldn't find.
 
 ## Disclaimer
 
-For offline / single-player use. Don't use this on games you don't own or on live services.
+For offline and single-player games you own. Don't use it on live services.

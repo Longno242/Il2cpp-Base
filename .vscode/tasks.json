@@ -2,76 +2,25 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Setup Dependencies",
+            "label": "Build Release",
             "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-ExecutionPolicy", "Bypass",
-                "-File", "${workspaceFolder}/scripts/setup_deps.ps1"
-            ],
-            "group": "build",
-            "problemMatcher": []
-        },
-        {
-            "label": "CMake: Configure",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-ExecutionPolicy", "Bypass",
-                "-File", "${workspaceFolder}/scripts/configure.ps1"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "dependsOn": ["Setup Dependencies"],
-            "group": "build",
-            "problemMatcher": []
-        },
-        {
-            "label": "CMake: Build Release",
-            "type": "shell",
-            "command": "cmake",
-            "args": [
-                "--build", "build",
-                "--config", "Release"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "dependsOn": ["CMake: Configure"],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
+            "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/build.ps1",
+            "group": { "kind": "build", "isDefault": true },
             "problemMatcher": "$msCompile"
         },
         {
-            "label": "CMake: Build Debug",
+            "label": "Build Debug",
             "type": "shell",
-            "command": "cmake",
-            "args": [
-                "--build", "build",
-                "--config", "Debug"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "dependsOn": ["CMake: Configure"],
+            "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/build.ps1 -Debug",
             "group": "build",
             "problemMatcher": "$msCompile"
         },
         {
             "label": "Clean Build",
             "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-Command",
-                "Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "problemMatcher": []
+            "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/build.ps1 -Clean",
+            "group": "build",
+            "problemMatcher": "$msCompile"
         }
     ]
 }

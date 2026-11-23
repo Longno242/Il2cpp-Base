@@ -1,19 +1,8 @@
 {
     "files.associations": {
-        "*.hpp": "cpp",
-        "xiosbase": "cpp"
+        "*.hpp": "cpp"
     },
-    "C_Cpp.default.includePath": [
-        "${workspaceFolder}/include",
-        "${workspaceFolder}/vendor/imgui",
-        "${workspaceFolder}/vendor/imgui/backends",
-        "${workspaceFolder}/vendor/minhook/include"
-    ],
-    "C_Cpp.default.cppStandard": "c++20",
-    "C_Cpp.default.compilerPath": "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe",
     "cmake.configureOnOpen": false,
-    "cmake.buildDirectory": "${workspaceFolder}/build",
-    "editor.formatOnSave": false,
     "files.exclude": {
         "**/build": true
     }

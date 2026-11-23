@@ -3,21 +3,20 @@
         {
             "name": "Win64",
             "includePath": [
-                "${workspaceFolder}/include",
+                "${workspaceFolder}/src",
                 "${workspaceFolder}/vendor/imgui",
                 "${workspaceFolder}/vendor/imgui/backends",
                 "${workspaceFolder}/vendor/minhook/include"
             ],
             "defines": [
-                "_DEBUG",
                 "UNICODE",
                 "_UNICODE",
                 "WIN32_LEAN_AND_MEAN",
-                "NOMINMAX"
+                "NOMINMAX",
+                "IMGUI_DISABLE_OBSOLETE_FUNCTIONS",
+                "IMGUI_DEFINE_MATH_OPERATORS",
+                "IL2CPP_BASE_VERSION=\"dev\""
             ],
-            "windowsSdkVersion": "10.0.26100.0",
-            "compilerPath": "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe",
-            "cStandard": "c17",
             "cppStandard": "c++20",
             "intelliSenseMode": "windows-msvc-x64"
         }
